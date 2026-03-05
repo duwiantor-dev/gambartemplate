@@ -1,16 +1,13 @@
 import io
-import json
 import math
-from dataclasses import dataclass
 from typing import List, Tuple, Optional
-
 from PIL import Image, ImageDraw, ImageFont
+
+DEFAULT_FONT_PATH = "assets/fonts/Inter-ExtraBold.ttf"
 
 
 def ensure_rgba(img: Image.Image) -> Image.Image:
-    if img.mode != "RGBA":
-        return img.convert("RGBA")
-    return img
+    return img.convert("RGBA") if img.mode != "RGBA" else img
 
 
 def load_image(uploaded_file) -> Image.Image:
@@ -26,42 +23,30 @@ def fit_inside(img: Image.Image, max_size: Tuple[int, int]) -> Image.Image:
     return img.resize((nw, nh), Image.LANCZOS)
 
 
-def get_font(size: int, font_path: Optional[str] = None) -> ImageFont.FreeTypeFont:
-    # If user provides a font path, try it.
-    if font_path:
-        try:
-            return ImageFont.truetype(font_path, size=size)
-        except Exception:
-            pass
-
-    # Try common system fonts
-    for path in [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]:
-        try:
-            return ImageFont.truetype(path, size=size)
-        except Exception:
-            continue
-
-    return ImageFont.load_default()
+def get_font(size: int, font_path: Optional[str] = None):
+    fp = font_path or DEFAULT_FONT_PATH
+    try:
+        return ImageFont.truetype(fp, size=size)
+    except Exception:
+        # fallback system
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size=size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
 
 
-def draw_wrapped_text(
-    draw: ImageDraw.ImageDraw,
-    text: str,
-    box: Tuple[int, int, int, int],
-    font: ImageFont.FreeTypeFont,
-    fill=(0, 0, 0, 255),
-    line_spacing=8,
-) -> None:
+def draw_wrapped_text(draw: ImageDraw.ImageDraw, text: str, box, font, fill=(0, 0, 0, 255), line_spacing=8):
     x1, y1, x2, y2 = box
     max_width = x2 - x1
 
-    # Split preserving newlines
     paragraphs = text.replace("\r", "").split("\n")
-
     y = y1
+
     for para in paragraphs:
         para = para.strip()
         if not para:
@@ -69,19 +54,19 @@ def draw_wrapped_text(
             continue
 
         words = para.split()
-        line = ""
         lines = []
+        cur = ""
 
         for w in words:
-            test = (line + " " + w).strip()
+            test = (cur + " " + w).strip()
             if draw.textlength(test, font=font) <= max_width:
-                line = test
+                cur = test
             else:
-                if line:
-                    lines.append(line)
-                line = w
-        if line:
-            lines.append(line)
+                if cur:
+                    lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
 
         for ln in lines:
             bbox = draw.textbbox((0, 0), ln, font=font)
@@ -94,39 +79,22 @@ def draw_wrapped_text(
         y += int(font.size * 0.3)
 
 
-def paste_into_box(
-    base: Image.Image,
-    overlay: Image.Image,
-    box: Tuple[int, int, int, int],
-    mode: str = "contain_center",
-) -> None:
-    """
-    mode:
-      - contain_center: fit overlay inside box, center it
-    """
+def paste_into_box(base: Image.Image, overlay: Image.Image, box):
     x1, y1, x2, y2 = box
     bw, bh = x2 - x1, y2 - y1
-
     fitted = fit_inside(overlay, (bw, bh))
     px = x1 + (bw - fitted.size[0]) // 2
     py = y1 + (bh - fitted.size[1]) // 2
     base.alpha_composite(fitted, (px, py))
 
 
-def render_logo_grid(
-    base: Image.Image,
-    logos: List[Image.Image],
-    box: Tuple[int, int, int, int],
-    cols: int = 7,
-    padding: int = 16,
-) -> None:
+def render_logo_grid(base: Image.Image, logos: List[Image.Image], box, cols=7, padding=16):
     if not logos:
         return
-
     x1, y1, x2, y2 = box
     bw, bh = x2 - x1, y2 - y1
 
-    cols = max(1, cols)
+    cols = max(1, int(cols))
     rows = math.ceil(len(logos) / cols)
 
     cell_w = (bw - padding * (cols - 1)) // cols
@@ -135,7 +103,6 @@ def render_logo_grid(
     for idx, logo in enumerate(logos):
         r = idx // cols
         c = idx % cols
-
         cx = x1 + c * (cell_w + padding)
         cy = y1 + r * (cell_h + padding)
 
@@ -145,16 +112,7 @@ def render_logo_grid(
         base.alpha_composite(fitted, (px, py))
 
 
-def render_banner(
-    background: Image.Image,
-    unit: Image.Image,
-    logos: List[Image.Image],
-    title: str,
-    model: str,
-    spec_text: str,
-    layout: dict,
-    font_path: Optional[str] = None,
-) -> Image.Image:
+def render_banner(background, unit, logos, title, model, spec_text, layout: dict):
     canvas_w = int(layout.get("canvas_w", 1080))
     canvas_h = int(layout.get("canvas_h", 1080))
 
@@ -168,36 +126,42 @@ def render_banner(
 
     # Logos
     logo_box = tuple(layout.get("logo_grid_box", [80, 820, 700, 1000]))
-    logo_cols = int(layout.get("logo_cols", 7))
-    logo_padding = int(layout.get("logo_padding", 18))
-    render_logo_grid(canvas, [ensure_rgba(l) for l in logos], logo_box, cols=logo_cols, padding=logo_padding)
+    render_logo_grid(
+        canvas,
+        [ensure_rgba(l) for l in logos],
+        logo_box,
+        cols=int(layout.get("logo_cols", 7)),
+        padding=int(layout.get("logo_padding", 18))
+    )
 
     # Text
     draw = ImageDraw.Draw(canvas)
-    title_font = get_font(int(layout.get("title_font_size", 44)), font_path=font_path)
-    model_font = get_font(int(layout.get("model_font_size", 32)), font_path=font_path)
-    spec_font = get_font(int(layout.get("spec_font_size", 30)), font_path=font_path)
+    title_font = get_font(int(layout.get("title_font_size", 44)))
+    model_font = get_font(int(layout.get("model_font_size", 32)))
+    spec_font = get_font(int(layout.get("spec_font_size", 30)))
 
-    title_pos = tuple(layout.get("title_pos", [80, 120]))
-    model_pos = tuple(layout.get("model_pos", [80, 180]))
-
-    draw.text(title_pos, title, font=title_font, fill=(0, 0, 0, 255))
-    draw.text(model_pos, model, font=model_font, fill=(0, 0, 0, 255))
+    draw.text(tuple(layout.get("title_pos", [80, 120])), title, font=title_font, fill=(0, 0, 0, 255))
+    draw.text(tuple(layout.get("model_pos", [80, 180])), model, font=model_font, fill=(0, 0, 0, 255))
 
     spec_box = tuple(layout.get("spec_box", [80, 300, 520, 620]))
-    line_spacing = int(layout.get("spec_line_spacing", 10))
-    draw_wrapped_text(draw, spec_text, spec_box, spec_font, fill=(0, 0, 0, 255), line_spacing=line_spacing)
+    draw_wrapped_text(
+        draw,
+        spec_text,
+        spec_box,
+        spec_font,
+        fill=(0, 0, 0, 255),
+        line_spacing=int(layout.get("spec_line_spacing", 10))
+    )
 
     return canvas
 
 
-def export_image(img_rgba: Image.Image, fmt: str = "PNG", jpg_quality: int = 90) -> Tuple[bytes, str, str]:
+def export_image(img_rgba: Image.Image, fmt: str = "PNG", jpg_quality: int = 90):
     buf = io.BytesIO()
     fmt = fmt.upper().strip()
-    if fmt == "JPG" or fmt == "JPEG":
+    if fmt in ("JPG", "JPEG"):
         rgb = img_rgba.convert("RGB")
         rgb.save(buf, format="JPEG", quality=jpg_quality, optimize=True)
         return buf.getvalue(), "image/jpeg", "jpg"
-    else:
-        img_rgba.save(buf, format="PNG")
-        return buf.getvalue(), "image/png", "png"
+    img_rgba.save(buf, format="PNG")
+    return buf.getvalue(), "image/png", "png"
