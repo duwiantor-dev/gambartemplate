@@ -3,37 +3,36 @@ import json
 import math
 import base64
 from copy import deepcopy
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
+import numpy as np
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image, ImageDraw, ImageFont
 
 
 # =========================================================
-# 1) INTER EXTRA BOLD (EMBED)
+# INTER EXTRA BOLD (EMBED BASE64)
 # =========================================================
 # Cara isi:
-# - Download font Inter ExtraBold .ttf (Inter-ExtraBold.ttf)
-# - Convert ke base64:
-#     python -c "import base64;print(base64.b64encode(open('Inter-ExtraBold.ttf','rb').read()).decode())"
-# - Copy hasilnya ke string di bawah ini.
-INTER_EXTRABOLD_TTF_B64 = ""  # <-- TEMPel base64 font di sini
+# 1) Download Inter-ExtraBold.ttf
+# 2) Convert ke base64:
+#    python -c "import base64;print(base64.b64encode(open('Inter-ExtraBold.ttf','rb').read()).decode())"
+# 3) Paste hasilnya ke string di bawah ini (di antara tanda kutip)
+INTER_EXTRABOLD_TTF_B64 = ""  # <-- PASTE BASE64 DI SINI
 
 
 def get_inter_extrabold_font(size: int) -> ImageFont.FreeTypeFont:
-    """
-    Load Inter ExtraBold dari base64 (tanpa file assets).
-    Kalau base64 kosong / gagal, fallback ke DejaVu.
-    """
-    if INTER_EXTRABOLD_TTF_B64.strip():
+    """Load Inter ExtraBold dari base64; fallback ke DejaVu jika belum diisi."""
+    b64 = INTER_EXTRABOLD_TTF_B64.strip()
+    if b64:
         try:
-            font_bytes = base64.b64decode(INTER_EXTRABOLD_TTF_B64.encode("utf-8"))
+            font_bytes = base64.b64decode(b64.encode("utf-8"))
             return ImageFont.truetype(io.BytesIO(font_bytes), size=size)
         except Exception:
             pass
 
-    # Fallback (kalau base64 belum diisi)
+    # fallback
     for path in [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -42,12 +41,11 @@ def get_inter_extrabold_font(size: int) -> ImageFont.FreeTypeFont:
             return ImageFont.truetype(path, size=size)
         except Exception:
             continue
-
     return ImageFont.load_default()
 
 
 # =========================================================
-# 2) DEFAULT TEMPLATE (NO FILE NEEDED)
+# DEFAULT LAYOUT (1080x1080)
 # =========================================================
 DEFAULT_LAYOUT = {
     "canvas_w": 1080,
@@ -72,7 +70,7 @@ DEFAULT_LAYOUT = {
 
 
 # =========================================================
-# 3) RENDER HELPERS
+# IMAGE HELPERS
 # =========================================================
 def ensure_rgba(img: Image.Image) -> Image.Image:
     return img.convert("RGBA") if img.mode != "RGBA" else img
@@ -89,6 +87,15 @@ def fit_inside(img: Image.Image, max_size: Tuple[int, int]) -> Image.Image:
     scale = min(mw / w, mh / h, 1.0)
     nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
     return img.resize((nw, nh), Image.LANCZOS)
+
+
+def ensure_canvas_bg_np(img: Image.Image):
+    """
+    FIX paling stabil untuk streamlit-drawable-canvas:
+    background_image harus numpy array (RGB), bukan PIL Image.
+    """
+    rgb = img.convert("RGB")
+    return np.array(rgb)
 
 
 def draw_wrapped_text(draw: ImageDraw.ImageDraw, text: str, box, font, fill=(0, 0, 0, 255), line_spacing=8):
@@ -163,7 +170,7 @@ def render_logo_grid(base: Image.Image, logos: List[Image.Image], box, cols=7, p
         base.alpha_composite(fitted, (px, py))
 
 
-def render_banner(background, unit, logos, title, model, spec_text, layout: dict):
+def render_banner(background, unit, logos, title, model, spec_text, layout: dict) -> Image.Image:
     canvas_w = int(layout.get("canvas_w", 1080))
     canvas_h = int(layout.get("canvas_h", 1080))
 
@@ -215,17 +222,6 @@ def export_image(img_rgba: Image.Image, fmt: str = "PNG", jpg_quality: int = 90)
     return buf.getvalue(), "image/png", "png"
 
 
-def ensure_canvas_bg(img: Image.Image) -> Image.Image:
-    """
-    FIX streamlit-drawable-canvas: pastikan format image tidak None.
-    """
-    img = img.convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return Image.open(buf)
-
-
 def clamp_box(box, w, h):
     x1, y1, x2, y2 = box
     x1 = max(0, min(int(x1), w))
@@ -244,7 +240,7 @@ def clamp_box(box, w, h):
 
 
 # =========================================================
-# 4) STREAMLIT UI
+# STREAMLIT UI
 # =========================================================
 st.set_page_config(page_title="Auto Banner Generator 1080×1080", layout="wide")
 st.title("Auto Banner Generator (1080×1080) — Upload → Edit Layout → Export")
@@ -258,7 +254,9 @@ canvas_h = int(layout["canvas_h"])
 
 tab1, tab2 = st.tabs(["Generate", "Layout Editor (Drag Kotak)"])
 
-# -------- TAB 1
+# =========================
+# TAB 1: GENERATE
+# =========================
 with tab1:
     left, right = st.columns([1, 1])
 
@@ -286,7 +284,6 @@ with tab1:
         st.subheader("Export")
         fmt = st.selectbox("Format", ["PNG", "JPG"])
         jpg_quality = st.slider("JPG Quality", 60, 95, 90) if fmt == "JPG" else 90
-
         generate = st.button("Generate")
 
         if not INTER_EXTRABOLD_TTF_B64.strip():
@@ -294,7 +291,6 @@ with tab1:
 
     with right:
         st.subheader("Preview / Output")
-
         if generate:
             if not bg_file or not unit_file:
                 st.error("Background dan Foto Unit wajib diupload.")
@@ -321,7 +317,9 @@ with tab1:
 
         st.caption("Tip: Kalau posisi belum pas, buka tab Layout Editor untuk geser area unit/spec/logo pakai drag kotak.")
 
-# -------- TAB 2
+# =========================
+# TAB 2: LAYOUT EDITOR
+# =========================
 with tab2:
     st.subheader("Layout Editor — Drag Kotak Area")
 
@@ -336,10 +334,10 @@ with tab2:
 
         if bg_for_editor:
             raw = load_image(bg_for_editor).resize((canvas_w, canvas_h), Image.LANCZOS)
-            bg_img = ensure_canvas_bg(raw)
+            bg_np = ensure_canvas_bg_np(raw)
         else:
             blank = Image.new("RGB", (canvas_w, canvas_h), (245, 245, 245))
-            bg_img = ensure_canvas_bg(blank)
+            bg_np = ensure_canvas_bg_np(blank)
 
         st.markdown("### Gambar kotak (Rect)")
 
@@ -347,7 +345,7 @@ with tab2:
             fill_color="rgba(0, 0, 0, 0)",
             stroke_width=3,
             stroke_color="rgba(255, 0, 0, 0.85)",
-            background_image=bg_img,
+            background_image=bg_np,   # <-- ndarray, FIX ERROR
             update_streamlit=True,
             height=canvas_h,
             width=canvas_w,
@@ -413,16 +411,12 @@ with tab2:
 
         st.markdown("---")
         st.markdown("### Export / Import Template JSON")
-        colx, coly = st.columns(2)
 
-        with colx:
-            if st.button("Download Template JSON"):
-                blob = json.dumps(st.session_state.layout, ensure_ascii=False, indent=2).encode("utf-8")
-                st.download_button("Download now", data=blob, file_name="template.json", mime="application/json")
+        tpl_json = json.dumps(st.session_state.layout, ensure_ascii=False, indent=2).encode("utf-8")
+        st.download_button("Download Template JSON", data=tpl_json, file_name="template.json", mime="application/json")
 
-        with coly:
-            uploaded_tpl = st.file_uploader("Upload Template JSON", type=["json"], key="tpl_upload")
-            if uploaded_tpl:
-                tpl = json.load(uploaded_tpl)
-                st.session_state.layout = tpl
-                st.success("Template loaded dari JSON.")
+        uploaded_tpl = st.file_uploader("Upload Template JSON", type=["json"], key="tpl_upload")
+        if uploaded_tpl:
+            tpl = json.load(uploaded_tpl)
+            st.session_state.layout = tpl
+            st.success("Template loaded dari JSON.")
