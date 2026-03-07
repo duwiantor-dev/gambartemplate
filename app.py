@@ -1,42 +1,187 @@
 import io
-import json
 import math
-import base64
-from copy import deepcopy
-from typing import List, Tuple
+import re
+import zipfile
+from dataclasses import dataclass
+from typing import List
 
-import numpy as np
+import pandas as pd
 import streamlit as st
-from streamlit_drawable_canvas import st_canvas
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+CANVAS_SIZE = 1080
+MAX_BADGES = 5
+PHOTO_BOX = (50, 165, 585, 780)
+BADGE_AREA = (520, 160, 850, 350)
+TITLE_AREA = (740, 120, 1030, 310)
+SPEC_AREA = (705, 345, 1035, 900)
+ACCENT = (214, 27, 143)
+TEXT_DARK = (20, 25, 38)
+WHITE = (255, 255, 255)
+
+POINT_SELLING_DB = [
+    {"keywords": ["RTX5090"], "label": "RTX 5090", "priority": 100},
+    {"keywords": ["RTX5080"], "label": "RTX 5080", "priority": 99},
+    {"keywords": ["RTX5070"], "label": "RTX 5070", "priority": 98},
+    {"keywords": ["RTX5060"], "label": "RTX 5060", "priority": 97},
+    {"keywords": ["RTX5050"], "label": "RTX 5050", "priority": 96},
+    {"keywords": ["RTX4070"], "label": "RTX 4070", "priority": 95},
+    {"keywords": ["RTX4060"], "label": "RTX 4060", "priority": 94},
+    {"keywords": ["RTX4050"], "label": "RTX 4050", "priority": 93},
+    {"keywords": ["RTX3050"], "label": "RTX 3050", "priority": 92},
+    {"keywords": ["RTX2050"], "label": "RTX 2050", "priority": 91},
+    {"keywords": ["RX7600S", "RX 7600S"], "label": "Radeon RX 7600S", "priority": 90},
+    {"keywords": ["RX7700S", "RX 7700S"], "label": "Radeon RX 7700S", "priority": 89},
+    {"keywords": ["ULTRA 9", "CORE ULTRA 9"], "label": "Core Ultra 9", "priority": 88},
+    {"keywords": ["ULTRA 7", "CORE ULTRA 7"], "label": "Core Ultra 7", "priority": 87},
+    {"keywords": ["ULTRA 5", "CORE ULTRA 5"], "label": "Core Ultra 5", "priority": 86},
+    {"keywords": ["I9", "CORE I9"], "label": "Intel Core i9", "priority": 85},
+    {"keywords": ["I7", "CORE I7"], "label": "Intel Core i7", "priority": 84},
+    {"keywords": ["I5", "CORE I5"], "label": "Intel Core i5", "priority": 83},
+    {"keywords": ["RYZEN 9"], "label": "Ryzen 9", "priority": 82},
+    {"keywords": ["RYZEN 7"], "label": "Ryzen 7", "priority": 81},
+    {"keywords": ["RYZEN 5"], "label": "Ryzen 5", "priority": 80},
+    {"keywords": ["32GB"], "label": "32GB RAM", "priority": 79},
+    {"keywords": ["24GB"], "label": "24GB RAM", "priority": 78},
+    {"keywords": ["16GB"], "label": "16GB RAM", "priority": 77},
+    {"keywords": ["8GB"], "label": "8GB RAM", "priority": 76},
+    {"keywords": ["2TB"], "label": "2TB SSD", "priority": 75},
+    {"keywords": ["1TB"], "label": "1TB SSD", "priority": 74},
+    {"keywords": ["512GB"], "label": "512GB SSD", "priority": 73},
+    {"keywords": ["OLED"], "label": "OLED Display", "priority": 72},
+    {"keywords": ["2.8K"], "label": "2.8K Display", "priority": 71},
+    {"keywords": ["2.5K"], "label": "2.5K Display", "priority": 70},
+    {"keywords": ["165HZ", "165 HZ"], "label": "165Hz", "priority": 69},
+    {"keywords": ["180HZ", "180 HZ"], "label": "180Hz", "priority": 68},
+    {"keywords": ["240HZ", "240 HZ"], "label": "240Hz", "priority": 67},
+    {"keywords": ["144HZ", "144 HZ"], "label": "144Hz", "priority": 66},
+    {"keywords": ["120HZ", "120 HZ"], "label": "120Hz", "priority": 65},
+    {"keywords": ["W11", "WINDOWS 11"], "label": "Windows 11", "priority": 64},
+    {"keywords": ["OHS"], "label": "Office H&S", "priority": 63},
+    {"keywords": ["M365B", "M365"], "label": "Microsoft 365", "priority": 62},
+    {"keywords": ["ADP"], "label": "ADP", "priority": 61},
+    {"keywords": ["PEN"], "label": "Stylus Support", "priority": 60},
+    {"keywords": ["TOUCH"], "label": "Touchscreen", "priority": 59},
+    {"keywords": ["FREE DOS"], "label": "Free DOS", "priority": 58},
+    {"keywords": ["NEBULA"], "label": "Nebula Display", "priority": 57},
+]
+
+TITLE_STOPWORDS = {
+    "RTX", "GTX", "RX", "16GB", "32GB", "24GB", "8GB", "512GB", "1TB", "2TB",
+    "W11", "OHS", "M365", "M365B", "15.6", "16.0", "16", "14.0", "14", "13.3",
+    "120HZ", "144HZ", "165HZ", "180HZ", "240HZ"
+}
+
+SAMPLE_SPECS = """ACER NITRO V 16S RYZEN 7 260 RTX5060 8GB/16GB 512GB W11+OHS+M365B 16.0WQXGA 180HZ 100SRGB 2Y+ADP BLK -41.R70Y
+LENOVO YOGA SLIM 7 14 TOUCH ULTRA 5 125H 16GB 512GB W11+OHS+M365B 14.0WUXGA OLED EVO 3Y PREM+3ADP GRY -A81D
+MSI THIN 15 I5 13420H RTX3050 4GB 8GB 512GB W11 15.6FHD 144HZ BLK"""
 
 
-# =========================================================
-# INTER EXTRA BOLD (EMBED BASE64)
-# =========================================================
-# Cara isi:
-# 1) Download Inter-ExtraBold.ttf
-# 2) Convert ke base64:
-#    python -c "import base64;print(base64.b64encode(open('Inter-ExtraBold.ttf','rb').read()).decode())"
-# 3) Paste hasilnya ke string di bawah ini (di antara tanda kutip)
-INTER_EXTRABOLD_TTF_B64 = ""  # <-- PASTE BASE64 DI SINI
+@dataclass
+class ProductItem:
+    index: int
+    raw: str
+    title: str
+    selling_points: List[str]
 
 
-def get_inter_extrabold_font(size: int) -> ImageFont.FreeTypeFont:
-    """Load Inter ExtraBold dari base64; fallback ke DejaVu jika belum diisi."""
-    b64 = INTER_EXTRABOLD_TTF_B64.strip()
-    if b64:
-        try:
-            font_bytes = base64.b64decode(b64.encode("utf-8"))
-            return ImageFont.truetype(io.BytesIO(font_bytes), size=size)
-        except Exception:
-            pass
+def normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").upper()).strip()
 
-    # fallback
-    for path in [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]:
+
+def sanitize_filename(value: str) -> str:
+    value = re.sub(r'[\\/:*?"<>|]+', '', str(value or 'output'))
+    value = re.sub(r'\s+', '-', value).strip('-')
+    return value[:120] or 'output'
+
+
+def extract_title(spec: str) -> str:
+    clean = normalize_text(spec)
+    tokens = clean.split()
+    result = []
+    for token in tokens:
+        if token in TITLE_STOPWORDS:
+            break
+        if re.match(r'^(RTX|GTX|RX)\d+', token):
+            break
+        if re.match(r'^\d+(GB|TB)$', token):
+            break
+        if re.match(r'^\d+(\.\d+)?(HZ)?$', token) and len(result) >= 2:
+            break
+        result.append(token)
+        if len(result) >= 7:
+            break
+    return ' '.join(result).strip() or clean[:40]
+
+
+def detect_selling_points(spec: str) -> List[str]:
+    text = normalize_text(spec)
+    matches = []
+    for item in POINT_SELLING_DB:
+        if any(normalize_text(k) in text for k in item['keywords']):
+            matches.append(item)
+    matches.sort(key=lambda x: x['priority'], reverse=True)
+    labels = []
+    for item in matches:
+        if item['label'] not in labels:
+            labels.append(item['label'])
+        if len(labels) >= MAX_BADGES:
+            break
+    return labels
+
+
+def parse_spec_lines(text: str) -> List[ProductItem]:
+    lines = [line.strip() for line in str(text or '').splitlines() if line.strip()]
+    return [
+        ProductItem(
+            index=i,
+            raw=line,
+            title=extract_title(line),
+            selling_points=detect_selling_points(line),
+        )
+        for i, line in enumerate(lines)
+    ]
+
+
+def read_specs_from_excel(uploaded_file) -> str:
+    if uploaded_file is None:
+        return ''
+    name = uploaded_file.name.lower()
+    if name.endswith('.csv'):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+
+    if df.empty:
+        return ''
+
+    preferred = None
+    for col in df.columns:
+        if normalize_text(col) == 'SPESIFIKASI':
+            preferred = col
+            break
+
+    if preferred is not None:
+        series = df[preferred]
+    else:
+        series = df.iloc[:, 0]
+
+    lines = [str(v).strip() for v in series.fillna('').tolist() if str(v).strip()]
+    return '\n'.join(lines)
+
+
+def get_font(size: int, bold: bool = False):
+    candidates = []
+    if bold:
+        candidates += [
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            '/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf',
+        ]
+    candidates += [
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf',
+    ]
+    for path in candidates:
         try:
             return ImageFont.truetype(path, size=size)
         except Exception:
@@ -44,379 +189,261 @@ def get_inter_extrabold_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-# =========================================================
-# DEFAULT LAYOUT (1080x1080)
-# =========================================================
-DEFAULT_LAYOUT = {
-    "canvas_w": 1080,
-    "canvas_h": 1080,
-
-    "title_pos": [80, 120],
-    "title_font_size": 44,
-
-    "model_pos": [80, 180],
-    "model_font_size": 32,
-
-    "spec_box": [80, 300, 520, 620],
-    "spec_font_size": 30,
-    "spec_line_spacing": 10,
-
-    "unit_box": [480, 360, 1040, 860],
-
-    "logo_grid_box": [80, 820, 700, 1000],
-    "logo_cols": 7,
-    "logo_padding": 18
-}
-
-
-# =========================================================
-# IMAGE HELPERS
-# =========================================================
-def ensure_rgba(img: Image.Image) -> Image.Image:
-    return img.convert("RGBA") if img.mode != "RGBA" else img
-
-
-def load_image(uploaded_file) -> Image.Image:
-    img = Image.open(uploaded_file)
-    return ensure_rgba(img)
-
-
-def fit_inside(img: Image.Image, max_size: Tuple[int, int]) -> Image.Image:
-    w, h = img.size
-    mw, mh = max_size
-    scale = min(mw / w, mh / h, 1.0)
-    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
-    return img.resize((nw, nh), Image.LANCZOS)
-
-
-def ensure_canvas_bg_np(img: Image.Image):
-    """
-    FIX paling stabil untuk streamlit-drawable-canvas:
-    background_image harus numpy array (RGB), bukan PIL Image.
-    """
-    rgb = img.convert("RGB")
-    return np.array(rgb)
-
-
-def draw_wrapped_text(draw: ImageDraw.ImageDraw, text: str, box, font, fill=(0, 0, 0, 255), line_spacing=8):
+def fit_image_contain(image: Image.Image, box):
     x1, y1, x2, y2 = box
-    max_width = x2 - x1
-
-    paragraphs = text.replace("\r", "").split("\n")
-    y = y1
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            y += int(font.size * 0.6)
-            continue
-
-        words = para.split()
-        lines = []
-        cur = ""
-
-        for w in words:
-            test = (cur + " " + w).strip()
-            if draw.textlength(test, font=font) <= max_width:
-                cur = test
-            else:
-                if cur:
-                    lines.append(cur)
-                cur = w
-        if cur:
-            lines.append(cur)
-
-        for ln in lines:
-            bbox = draw.textbbox((0, 0), ln, font=font)
-            line_h = bbox[3] - bbox[1]
-            if y + line_h > y2:
-                return
-            draw.text((x1, y), ln, font=font, fill=fill)
-            y += line_h + line_spacing
-
-        y += int(font.size * 0.3)
+    box_w = x2 - x1
+    box_h = y2 - y1
+    src_w, src_h = image.size
+    ratio = min(box_w / src_w, box_h / src_h)
+    new_size = (max(1, int(src_w * ratio)), max(1, int(src_h * ratio)))
+    resized = image.resize(new_size, Image.LANCZOS)
+    pos_x = x1 + (box_w - new_size[0]) // 2
+    pos_y = y1 + (box_h - new_size[1]) // 2
+    return resized, (pos_x, pos_y)
 
 
-def paste_into_box(base: Image.Image, overlay: Image.Image, box):
-    x1, y1, x2, y2 = box
-    bw, bh = x2 - x1, y2 - y1
-    fitted = fit_inside(overlay, (bw, bh))
-    px = x1 + (bw - fitted.size[0]) // 2
-    py = y1 + (bh - fitted.size[1]) // 2
-    base.alpha_composite(fitted, (px, py))
+def wrap_text_by_width(draw: ImageDraw.ImageDraw, text: str, font, max_width: int, max_lines: int):
+    words = str(text or '').split()
+    lines = []
+    current = ''
+    for word in words:
+        candidate = word if not current else f'{current} {word}'
+        width = draw.textbbox((0, 0), candidate, font=font)[2]
+        if width <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+            if len(lines) >= max_lines - 1:
+                break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+
+    if len(lines) == max_lines and ' '.join(words) != ' '.join(lines):
+        while lines[-1] and draw.textbbox((0, 0), lines[-1] + '...', font=font)[2] > max_width:
+            lines[-1] = lines[-1][:-1]
+        lines[-1] += '...'
+    return lines
 
 
-def render_logo_grid(base: Image.Image, logos: List[Image.Image], box, cols=7, padding=16):
-    if not logos:
+def rounded_rectangle(draw, box, radius, fill, outline=None, width=1):
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
+
+def draw_badges(base: Image.Image, labels: List[str]):
+    if not labels:
         return
-    x1, y1, x2, y2 = box
-    bw, bh = x2 - x1, y2 - y1
+    draw = ImageDraw.Draw(base)
+    x1, y1, x2, _ = BADGE_AREA
+    badge_font = get_font(28, bold=True)
+    col_w = 155
+    badge_h = 56
+    gap_x = 12
+    gap_y = 12
 
-    cols = max(1, int(cols))
-    rows = math.ceil(len(logos) / cols)
-
-    cell_w = (bw - padding * (cols - 1)) // cols
-    cell_h = (bh - padding * (rows - 1)) // max(1, rows)
-
-    for idx, logo in enumerate(logos):
-        r = idx // cols
-        c = idx % cols
-        cx = x1 + c * (cell_w + padding)
-        cy = y1 + r * (cell_h + padding)
-
-        fitted = fit_inside(logo, (cell_w, cell_h))
-        px = cx + (cell_w - fitted.size[0]) // 2
-        py = cy + (cell_h - fitted.size[1]) // 2
-        base.alpha_composite(fitted, (px, py))
-
-
-def render_banner(background, unit, logos, title, model, spec_text, layout: dict) -> Image.Image:
-    canvas_w = int(layout.get("canvas_w", 1080))
-    canvas_h = int(layout.get("canvas_h", 1080))
-
-    bg = ensure_rgba(background).resize((canvas_w, canvas_h), Image.LANCZOS)
-    canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
-    canvas.alpha_composite(bg, (0, 0))
-
-    # Unit
-    paste_into_box(canvas, ensure_rgba(unit), tuple(layout["unit_box"]))
-
-    # Logos
-    render_logo_grid(
-        canvas,
-        [ensure_rgba(l) for l in logos],
-        tuple(layout["logo_grid_box"]),
-        cols=int(layout["logo_cols"]),
-        padding=int(layout["logo_padding"])
-    )
-
-    # Text
-    draw = ImageDraw.Draw(canvas)
-    title_font = get_inter_extrabold_font(int(layout["title_font_size"]))
-    model_font = get_inter_extrabold_font(int(layout["model_font_size"]))
-    spec_font = get_inter_extrabold_font(int(layout["spec_font_size"]))
-
-    draw.text(tuple(layout["title_pos"]), title, font=title_font, fill=(0, 0, 0, 255))
-    draw.text(tuple(layout["model_pos"]), model, font=model_font, fill=(0, 0, 0, 255))
-
-    draw_wrapped_text(
-        draw,
-        spec_text,
-        tuple(layout["spec_box"]),
-        spec_font,
-        fill=(0, 0, 0, 255),
-        line_spacing=int(layout["spec_line_spacing"])
-    )
-
-    return canvas
+    for i, label in enumerate(labels[:MAX_BADGES]):
+        row = i // 2
+        col = i % 2
+        bx1 = x1 + col * (col_w + gap_x)
+        by1 = y1 + row * (badge_h + gap_y)
+        bx2 = bx1 + col_w
+        by2 = by1 + badge_h
+        rounded_rectangle(draw, (bx1, by1, bx2, by2), 16, fill=(255, 255, 255, 235), outline=(255, 255, 255, 160), width=2)
+        text_bbox = draw.textbbox((0, 0), label, font=badge_font)
+        tx = bx1 + (col_w - (text_bbox[2] - text_bbox[0])) / 2
+        ty = by1 + (badge_h - (text_bbox[3] - text_bbox[1])) / 2 - 2
+        draw.text((tx, ty), label, font=badge_font, fill=TEXT_DARK)
 
 
-def export_image(img_rgba: Image.Image, fmt: str = "PNG", jpg_quality: int = 90):
+def render_card(background: Image.Image, product_photo: Image.Image, item: ProductItem) -> Image.Image:
+    base = background.convert('RGBA').resize((CANVAS_SIZE, CANVAS_SIZE), Image.LANCZOS)
+
+    photo = product_photo.convert('RGBA')
+    contained, (px, py) = fit_image_contain(photo, PHOTO_BOX)
+
+    shadow = Image.new('RGBA', base.size, (0, 0, 0, 0))
+    shadow_box = Image.new('RGBA', (contained.width + 40, contained.height + 40), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_box)
+    shadow_draw.rounded_rectangle((20, 20, shadow_box.width - 20, shadow_box.height - 20), 30, fill=(0, 0, 0, 120))
+    shadow_box = shadow_box.filter(ImageFilter.GaussianBlur(18))
+    shadow.alpha_composite(shadow_box, (px - 20, py - 5))
+    base = Image.alpha_composite(base, shadow)
+    base.alpha_composite(contained, (px, py))
+
+    overlay = Image.new('RGBA', base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    pill_font = get_font(30, bold=True)
+    pill_text = 'AUTO GENERATE'
+    pill_bbox = draw.textbbox((0, 0), pill_text, font=pill_font)
+    pill_w = pill_bbox[2] - pill_bbox[0] + 54
+    pill_h = 54
+    pill_x = 775
+    pill_y = 120
+    rounded_rectangle(draw, (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h), 27, fill=ACCENT)
+    draw.text((pill_x + 27, pill_y + 10), pill_text, font=pill_font, fill=WHITE)
+
+    title_font = get_font(45, bold=True)
+    title_lines = wrap_text_by_width(draw, item.title, title_font, TITLE_AREA[2] - TITLE_AREA[0], 3)
+    ty = TITLE_AREA[1]
+    for line in title_lines:
+        bbox = draw.textbbox((0, 0), line, font=title_font)
+        tw = bbox[2] - bbox[0]
+        tx = TITLE_AREA[0] + ((TITLE_AREA[2] - TITLE_AREA[0]) - tw) / 2
+        draw.text((tx, ty), line, font=title_font, fill=TEXT_DARK)
+        ty += 50
+
+    rounded_rectangle(draw, SPEC_AREA, 30, fill=(255, 255, 255, 220), outline=(255, 255, 255, 180), width=2)
+    spec_title_font = get_font(28, bold=True)
+    spec_font = get_font(28, bold=True)
+    draw.text((SPEC_AREA[0] + 24, SPEC_AREA[1] + 20), 'SPESIFIKASI', font=spec_title_font, fill=ACCENT)
+    spec_lines = wrap_text_by_width(draw, item.raw, spec_font, SPEC_AREA[2] - SPEC_AREA[0] - 48, 11)
+    sy = SPEC_AREA[1] + 68
+    for line in spec_lines:
+        draw.text((SPEC_AREA[0] + 24, sy), line, font=spec_font, fill=TEXT_DARK)
+        sy += 34
+
+    footer_font = get_font(18, bold=True)
+    footer_text = '1080 x 1080'
+    fb = draw.textbbox((0, 0), footer_text, font=footer_font)
+    fw = fb[2] - fb[0] + 36
+    fh = 36
+    fx = 890
+    fy = 1015
+    rounded_rectangle(draw, (fx, fy, fx + fw, fy + fh), 18, fill=(18, 25, 39, 220))
+    draw.text((fx + 18, fy + 8), footer_text, font=footer_font, fill=WHITE)
+
+    composed = Image.alpha_composite(base, overlay)
+    draw_badges(composed, item.selling_points)
+    return composed.convert('RGB')
+
+
+def image_to_bytes(image: Image.Image) -> bytes:
     buf = io.BytesIO()
-    fmt = fmt.upper().strip()
-    if fmt in ("JPG", "JPEG"):
-        rgb = img_rgba.convert("RGB")
-        rgb.save(buf, format="JPEG", quality=jpg_quality, optimize=True)
-        return buf.getvalue(), "image/jpeg", "jpg"
-    img_rgba.save(buf, format="PNG")
-    return buf.getvalue(), "image/png", "png"
+    image.save(buf, format='PNG')
+    return buf.getvalue()
 
 
-def clamp_box(box, w, h):
-    x1, y1, x2, y2 = box
-    x1 = max(0, min(int(x1), w))
-    x2 = max(0, min(int(x2), w))
-    y1 = max(0, min(int(y1), h))
-    y2 = max(0, min(int(y2), h))
-    if x2 < x1:
-        x1, x2 = x2, x1
-    if y2 < y1:
-        y1, y2 = y2, y1
-    if x2 == x1:
-        x2 = min(w, x1 + 1)
-    if y2 == y1:
-        y2 = min(h, y1 + 1)
-    return [x1, y1, x2, y2]
+def build_zip(files):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for filename, payload in files:
+            zf.writestr(filename, payload)
+    buf.seek(0)
+    return buf.getvalue()
 
 
-# =========================================================
-# STREAMLIT UI
-# =========================================================
-st.set_page_config(page_title="Auto Banner Generator 1080×1080", layout="wide")
-st.title("Auto Banner Generator (1080×1080) — Upload → Edit Layout → Export")
+def main():
+    st.set_page_config(page_title='Auto Product Image Generator', layout='wide')
+    st.title('Auto Product Image Generator')
+    st.caption('Upload 1 background, upload foto produk sesuai urutan, lalu paste spesifikasi atau import Excel.')
 
-if "layout" not in st.session_state:
-    st.session_state.layout = deepcopy(DEFAULT_LAYOUT)
+    if 'spec_text' not in st.session_state:
+        st.session_state.spec_text = SAMPLE_SPECS
 
-layout = st.session_state.layout
-canvas_w = int(layout["canvas_w"])
-canvas_h = int(layout["canvas_h"])
-
-tab1, tab2 = st.tabs(["Generate", "Layout Editor (Drag Kotak)"])
-
-# =========================
-# TAB 1: GENERATE
-# =========================
-with tab1:
-    left, right = st.columns([1, 1])
+    left, right = st.columns([1, 1.5])
 
     with left:
-        st.subheader("Input")
-        bg_file = st.file_uploader("Background (PNG/JPG)", type=["png", "jpg", "jpeg"])
-        unit_file = st.file_uploader("Foto Unit (PNG transparan)", type=["png"])
-        logo_files = st.file_uploader(
-            "Logo Selling Point (boleh banyak, PNG/JPG)",
-            type=["png", "jpg", "jpeg"],
-            accept_multiple_files=True
+        bg_file = st.file_uploader('Upload background', type=['png', 'jpg', 'jpeg'])
+        photo_files = st.file_uploader('Upload foto produk', type=['png', 'jpg', 'jpeg', 'webp'], accept_multiple_files=True)
+        excel_file = st.file_uploader('Upload Excel bulk', type=['xlsx', 'xls', 'csv'])
+
+        if excel_file is not None:
+            try:
+                st.session_state.spec_text = read_specs_from_excel(excel_file)
+                st.success('Excel berhasil dibaca.')
+            except Exception as exc:
+                st.error(f'Gagal membaca Excel: {exc}')
+
+        st.session_state.spec_text = st.text_area(
+            'Paste Spesifikasi',
+            value=st.session_state.spec_text,
+            height=260,
+            help='1 baris = 1 produk. Urutan harus sama dengan urutan foto.',
         )
 
-        title = st.text_input("Judul / Series", "ASUS ROG Zephyrus G16")
-        model = st.text_input("Model", "GU605MU")
-        spec_text = st.text_area(
-            "Text Spesifikasi (boleh multi-line)",
-            "Intel® Core™ Ultra 7 155H | NVIDIA® GeForce RTX™ 4050\n"
-            "16GB LPDDR5X | 1TB PCIe 4.0 NVMe™ M.2 SSD\n"
-            "ROG Nebula Display 16-inch 2.5K, 240Hz",
-            height=130
-        )
-
-        st.markdown("---")
-        st.subheader("Export")
-        fmt = st.selectbox("Format", ["PNG", "JPG"])
-        jpg_quality = st.slider("JPG Quality", 60, 95, 90) if fmt == "JPG" else 90
-        generate = st.button("Generate")
-
-        if not INTER_EXTRABOLD_TTF_B64.strip():
-            st.warning("Inter ExtraBold belum di-embed. App masih jalan pakai font fallback (DejaVu).")
+    items = parse_spec_lines(st.session_state.spec_text)
 
     with right:
-        st.subheader("Preview / Output")
-        if generate:
-            if not bg_file or not unit_file:
-                st.error("Background dan Foto Unit wajib diupload.")
-            else:
-                bg = load_image(bg_file)
-                unit = load_image(unit_file)
-                logos = [load_image(lf) for lf in (logo_files or [])]
+        c1, c2, c3 = st.columns(3)
+        c1.metric('Jumlah spesifikasi', len(items))
+        c2.metric('Jumlah foto', len(photo_files) if photo_files else 0)
+        c3.metric('Mode output', 'ZIP' if len(items) > 1 or (photo_files and len(photo_files) > 1) else 'PNG')
 
-                out = render_banner(
-                    background=bg,
-                    unit=unit,
-                    logos=logos,
-                    title=title,
-                    model=model,
-                    spec_text=spec_text,
-                    layout=layout
+        if not items:
+            st.info('Isi spesifikasi dulu untuk melihat preview.')
+
+    if st.button('Generate', type='primary', use_container_width=True):
+        error = None
+        if bg_file is None:
+            error = 'Background wajib diupload.'
+        elif not items:
+            error = 'Spesifikasi wajib diisi.'
+        elif not photo_files:
+            error = 'Foto produk wajib diupload.'
+        elif len(photo_files) != len(items):
+            error = f'Jumlah foto ({len(photo_files)}) harus sama dengan jumlah spesifikasi ({len(items)}).'
+
+        if error:
+            st.error(error)
+            return
+
+        try:
+            background = Image.open(bg_file).convert('RGBA')
+            rendered_files = []
+            preview_images = []
+            progress = st.progress(0, text='Menyiapkan render...')
+
+            for idx, (item, photo_file) in enumerate(zip(items, photo_files), start=1):
+                photo = Image.open(photo_file).convert('RGBA')
+                result = render_card(background, photo, item)
+                filename = f"{sanitize_filename(f'{idx}-{item.title}')}.png"
+                payload = image_to_bytes(result)
+                rendered_files.append((filename, payload))
+                preview_images.append((item, result, filename))
+                progress.progress(idx / len(items), text=f'Generate {idx} / {len(items)}')
+
+            st.success(f'Selesai. {len(rendered_files)} file berhasil dibuat.')
+
+            if len(rendered_files) == 1:
+                st.download_button(
+                    'Download PNG',
+                    data=rendered_files[0][1],
+                    file_name=rendered_files[0][0],
+                    mime='image/png',
+                    use_container_width=True,
+                )
+            else:
+                zip_bytes = build_zip(rendered_files)
+                st.download_button(
+                    'Download ZIP',
+                    data=zip_bytes,
+                    file_name='hasil-generate.zip',
+                    mime='application/zip',
+                    use_container_width=True,
                 )
 
-                st.image(out.convert("RGB"), use_container_width=True)
+            st.subheader('Preview Hasil')
+            preview_cols = st.columns(2)
+            for i, (item, image, filename) in enumerate(preview_images):
+                with preview_cols[i % 2]:
+                    st.image(image, caption=f'{i+1}. {item.title}', use_container_width=True)
+                    st.caption(item.raw)
+                    if item.selling_points:
+                        st.write(' | '.join(item.selling_points))
+                    st.download_button(
+                        f'Download PNG #{i+1}',
+                        data=rendered_files[i][1],
+                        file_name=filename,
+                        mime='image/png',
+                        key=f'dl_{i}',
+                        use_container_width=True,
+                    )
 
-                data, mime, ext = export_image(out, fmt=fmt, jpg_quality=jpg_quality)
-                filename = f"{model}_{canvas_w}x{canvas_h}.{ext}"
-                st.download_button("Download", data=data, file_name=filename, mime=mime)
+        except Exception as exc:
+            st.error(f'Terjadi kesalahan saat generate: {exc}')
 
-        st.caption("Tip: Kalau posisi belum pas, buka tab Layout Editor untuk geser area unit/spec/logo pakai drag kotak.")
 
-# =========================
-# TAB 2: LAYOUT EDITOR
-# =========================
-with tab2:
-    st.subheader("Layout Editor — Drag Kotak Area")
-
-    colA, colB = st.columns([1, 1])
-
-    with colA:
-        bg_for_editor = st.file_uploader(
-            "Background untuk editor (PNG/JPG)",
-            type=["png", "jpg", "jpeg"],
-            key="bg_editor"
-        )
-
-        if bg_for_editor:
-            raw = load_image(bg_for_editor).resize((canvas_w, canvas_h), Image.LANCZOS)
-            bg_np = ensure_canvas_bg_np(raw)
-        else:
-            blank = Image.new("RGB", (canvas_w, canvas_h), (245, 245, 245))
-            bg_np = ensure_canvas_bg_np(blank)
-
-        st.markdown("### Gambar kotak (Rect)")
-
-        canvas_result = st_canvas(
-            fill_color="rgba(0, 0, 0, 0)",
-            stroke_width=3,
-            stroke_color="rgba(255, 0, 0, 0.85)",
-            background_image=bg_np,   # <-- ndarray, FIX ERROR
-            update_streamlit=True,
-            height=canvas_h,
-            width=canvas_w,
-            drawing_mode="rect",
-            key="canvas_layout",
-        )
-
-    with colB:
-        st.markdown("### Setting Grid")
-        logo_cols = st.slider("Logo cols", 3, 12, int(layout.get("logo_cols", 7)))
-        logo_padding = st.slider("Logo padding", 0, 40, int(layout.get("logo_padding", 18)))
-
-        st.markdown("### Font Size")
-        title_size = st.slider("Title font size", 20, 90, int(layout.get("title_font_size", 44)))
-        model_size = st.slider("Model font size", 16, 70, int(layout.get("model_font_size", 32)))
-        spec_size = st.slider("Spec font size", 16, 70, int(layout.get("spec_font_size", 30)))
-        spec_spacing = st.slider("Spec line spacing", 0, 30, int(layout.get("spec_line_spacing", 10)))
-
-        st.markdown("### Posisi Title/Model (manual)")
-        tx = st.number_input("Title X", 0, canvas_w, int(layout.get("title_pos", [80, 120])[0]))
-        ty = st.number_input("Title Y", 0, canvas_h, int(layout.get("title_pos", [80, 120])[1]))
-        mx = st.number_input("Model X", 0, canvas_w, int(layout.get("model_pos", [80, 180])[0]))
-        my = st.number_input("Model Y", 0, canvas_h, int(layout.get("model_pos", [80, 180])[1]))
-
-        rects = []
-        if canvas_result.json_data and "objects" in canvas_result.json_data:
-            for obj in canvas_result.json_data["objects"]:
-                if obj.get("type") == "rect":
-                    left = obj.get("left", 0)
-                    top = obj.get("top", 0)
-                    width = obj.get("width", 1) * obj.get("scaleX", 1)
-                    height = obj.get("height", 1) * obj.get("scaleY", 1)
-                    rects.append([left, top, left + width, top + height])
-
-        st.info(
-            "Urutan kotak:\n"
-            "1) UNIT BOX\n"
-            "2) SPEC BOX\n"
-            "3) LOGO GRID BOX\n\n"
-            f"Jumlah kotak terdeteksi: {len(rects)}"
-        )
-
-        if st.button("Apply Layout dari kotak"):
-            new_layout = deepcopy(layout)
-            new_layout["logo_cols"] = int(logo_cols)
-            new_layout["logo_padding"] = int(logo_padding)
-            new_layout["title_font_size"] = int(title_size)
-            new_layout["model_font_size"] = int(model_size)
-            new_layout["spec_font_size"] = int(spec_size)
-            new_layout["spec_line_spacing"] = int(spec_spacing)
-            new_layout["title_pos"] = [int(tx), int(ty)]
-            new_layout["model_pos"] = [int(mx), int(my)]
-
-            if len(rects) >= 1:
-                new_layout["unit_box"] = clamp_box(rects[0], canvas_w, canvas_h)
-            if len(rects) >= 2:
-                new_layout["spec_box"] = clamp_box(rects[1], canvas_w, canvas_h)
-            if len(rects) >= 3:
-                new_layout["logo_grid_box"] = clamp_box(rects[2], canvas_w, canvas_h)
-
-            st.session_state.layout = new_layout
-            st.success("Layout diterapkan. Balik ke tab Generate untuk test.")
-
-        st.markdown("---")
-        st.markdown("### Export / Import Template JSON")
-
-        tpl_json = json.dumps(st.session_state.layout, ensure_ascii=False, indent=2).encode("utf-8")
-        st.download_button("Download Template JSON", data=tpl_json, file_name="template.json", mime="application/json")
-
-        uploaded_tpl = st.file_uploader("Upload Template JSON", type=["json"], key="tpl_upload")
-        if uploaded_tpl:
-            tpl = json.load(uploaded_tpl)
-            st.session_state.layout = tpl
-            st.success("Template loaded dari JSON.")
+if __name__ == '__main__':
+    main()
