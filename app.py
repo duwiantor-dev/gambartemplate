@@ -260,62 +260,100 @@ def render_card(background: Image.Image, product_photo: Image.Image, item: Produ
     base = background.convert('RGBA').resize((CANVAS_SIZE, CANVAS_SIZE), Image.LANCZOS)
 
     photo = product_photo.convert('RGBA')
-    contained, (px, py) = fit_image_contain(photo, PHOTO_BOX)
+    # Slightly larger and higher product placement
+    photo_box = (35, 150, 600, 725)
+    contained, (px, py) = fit_image_contain(photo, photo_box)
 
     shadow = Image.new('RGBA', base.size, (0, 0, 0, 0))
-    shadow_box = Image.new('RGBA', (contained.width + 40, contained.height + 40), (0, 0, 0, 0))
+    shadow_box = Image.new('RGBA', (contained.width + 22, contained.height + 22), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow_box)
-    shadow_draw.rounded_rectangle((20, 20, shadow_box.width - 20, shadow_box.height - 20), 30, fill=(0, 0, 0, 120))
-    shadow_box = shadow_box.filter(ImageFilter.GaussianBlur(18))
-    shadow.alpha_composite(shadow_box, (px - 20, py - 5))
+    shadow_draw.rounded_rectangle((12, 12, shadow_box.width - 12, shadow_box.height - 12), 26, fill=(0, 0, 0, 78))
+    shadow_box = shadow_box.filter(ImageFilter.GaussianBlur(14))
+    shadow.alpha_composite(shadow_box, (px - 10, py + 8))
     base = Image.alpha_composite(base, shadow)
     base.alpha_composite(contained, (px, py))
 
     overlay = Image.new('RGBA', base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    pill_font = get_font(30, bold=True)
-    pill_text = 'AUTO GENERATE'
+    # Top pill
+    pill_font = get_font(22, bold=True)
+    pill_text = 'AUTOGENERATE'
     pill_bbox = draw.textbbox((0, 0), pill_text, font=pill_font)
-    pill_w = pill_bbox[2] - pill_bbox[0] + 54
-    pill_h = 54
-    pill_x = 775
-    pill_y = 120
-    rounded_rectangle(draw, (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h), 27, fill=ACCENT)
-    draw.text((pill_x + 27, pill_y + 10), pill_text, font=pill_font, fill=WHITE)
+    pill_w = pill_bbox[2] - pill_bbox[0] + 40
+    pill_h = 44
+    pill_x = 770
+    pill_y = 118
+    rounded_rectangle(draw, (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h), 22, fill=ACCENT)
+    draw.text((pill_x + 20, pill_y + 10), pill_text, font=pill_font, fill=WHITE)
 
-    title_font = get_font(45, bold=True)
-    title_lines = wrap_text_by_width(draw, item.title, title_font, TITLE_AREA[2] - TITLE_AREA[0], 3)
-    ty = TITLE_AREA[1]
+    # Bigger product title, max 2 lines, right aligned zone
+    title_area = (720, 92, 1025, 205)
+    title_font = get_font(34, bold=True)
+    title_lines = wrap_text_by_width(draw, item.title, title_font, title_area[2] - title_area[0], 2)
+    total_h = len(title_lines) * 38
+    ty = title_area[1] + max(0, ((title_area[3] - title_area[1]) - total_h) / 2)
     for line in title_lines:
         bbox = draw.textbbox((0, 0), line, font=title_font)
         tw = bbox[2] - bbox[0]
-        tx = TITLE_AREA[0] + ((TITLE_AREA[2] - TITLE_AREA[0]) - tw) / 2
+        tx = title_area[2] - tw
         draw.text((tx, ty), line, font=title_font, fill=TEXT_DARK)
-        ty += 50
+        ty += 38
 
-    rounded_rectangle(draw, SPEC_AREA, 30, fill=(255, 255, 255, 220), outline=(255, 255, 255, 180), width=2)
-    spec_title_font = get_font(28, bold=True)
-    spec_font = get_font(28, bold=True)
-    draw.text((SPEC_AREA[0] + 24, SPEC_AREA[1] + 20), 'SPESIFIKASI', font=spec_title_font, fill=ACCENT)
-    spec_lines = wrap_text_by_width(draw, item.raw, spec_font, SPEC_AREA[2] - SPEC_AREA[0] - 48, 11)
-    sy = SPEC_AREA[1] + 68
+    # Stronger specification box
+    spec_box = (710, 360, 1030, 520)
+    rounded_rectangle(draw, spec_box, 24, fill=(255, 255, 255, 235), outline=(255, 255, 255, 185), width=2)
+    spec_title_font = get_font(20, bold=True)
+    spec_font = get_font(20, bold=False)
+    draw.text((spec_box[0] + 20, spec_box[1] + 16), 'SPESIFIKASI', font=spec_title_font, fill=ACCENT)
+    spec_lines = wrap_text_by_width(draw, item.raw, spec_font, spec_box[2] - spec_box[0] - 40, 7)
+    sy = spec_box[1] + 52
     for line in spec_lines:
-        draw.text((SPEC_AREA[0] + 24, sy), line, font=spec_font, fill=TEXT_DARK)
-        sy += 34
+        draw.text((spec_box[0] + 20, sy), line, font=spec_font, fill=TEXT_DARK)
+        sy += 28
 
-    footer_font = get_font(18, bold=True)
+    # Footer badge
+    footer_font = get_font(16, bold=True)
     footer_text = '1080 x 1080'
     fb = draw.textbbox((0, 0), footer_text, font=footer_font)
-    fw = fb[2] - fb[0] + 36
-    fh = 36
-    fx = 890
-    fy = 1015
-    rounded_rectangle(draw, (fx, fy, fx + fw, fy + fh), 18, fill=(18, 25, 39, 220))
-    draw.text((fx + 18, fy + 8), footer_text, font=footer_font, fill=WHITE)
+    fw = fb[2] - fb[0] + 34
+    fh = 34
+    fx = 900
+    fy = 1018
+    rounded_rectangle(draw, (fx, fy, fx + fw, fy + fh), 18, fill=(27, 33, 49, 230))
+    draw.text((fx + 17, fy + 8), footer_text, font=footer_font, fill=WHITE)
 
     composed = Image.alpha_composite(base, overlay)
-    draw_badges(composed, item.selling_points)
+
+    # Redesigned badges: more balanced and larger
+    labels = item.selling_points[:MAX_BADGES]
+    if labels:
+        badge_overlay = Image.new('RGBA', composed.size, (0, 0, 0, 0))
+        badge_draw = ImageDraw.Draw(badge_overlay)
+        badge_font = get_font(19, bold=True)
+        bx_start = 515
+        by_start = 175
+        col_w = 160
+        badge_h = 52
+        gap_x = 12
+        gap_y = 14
+        for i, label in enumerate(labels):
+            row = i // 2
+            col = i % 2
+            bx1 = bx_start + col * (col_w + gap_x)
+            by1 = by_start + row * (badge_h + gap_y)
+            bx2 = bx1 + col_w
+            by2 = by1 + badge_h
+            badge_draw.rounded_rectangle((bx1, by1, bx2, by2), radius=18, fill=(255, 255, 255, 248))
+            badge_draw.rounded_rectangle((bx1, by1, bx2, by2), radius=18, outline=(230, 232, 240, 255), width=1)
+            tb = badge_draw.textbbox((0, 0), label, font=badge_font)
+            tw = tb[2] - tb[0]
+            th = tb[3] - tb[1]
+            tx = bx1 + (col_w - tw) / 2
+            ty = by1 + (badge_h - th) / 2 - 2
+            badge_draw.text((tx, ty), label, font=badge_font, fill=TEXT_DARK)
+        composed = Image.alpha_composite(composed, badge_overlay)
+
     return composed.convert('RGB')
 
 
@@ -425,7 +463,7 @@ def main():
                 )
 
             st.subheader('Preview Hasil')
-            preview_cols = st.columns(2)
+            preview_cols = st.columns(2, gap='large')
             for i, (item, image, filename) in enumerate(preview_images):
                 with preview_cols[i % 2]:
                     st.image(image, caption=f'{i+1}. {item.title}', use_container_width=True)
