@@ -229,6 +229,31 @@ def wrap_text_by_width(draw: ImageDraw.ImageDraw, text: str, font, max_width: in
     return lines
 
 
+def fit_font_size(draw: ImageDraw.ImageDraw, text: str, max_width: int, start_size: int, min_size: int = 16, bold: bool = True):
+    size = start_size
+    font = get_font(size, bold=bold)
+    while size > min_size and draw.textbbox((0, 0), text, font=font)[2] > max_width:
+        size -= 2
+        font = get_font(size, bold=bold)
+    return font, size
+
+
+def draw_centered_lines(draw: ImageDraw.ImageDraw, lines, box, font, fill, line_gap=8):
+    x1, y1, x2, y2 = box
+    heights = []
+    widths = []
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        widths.append(bbox[2] - bbox[0])
+        heights.append(bbox[3] - bbox[1])
+    total_h = sum(heights) + line_gap * max(0, len(lines) - 1)
+    y = y1 + ((y2 - y1) - total_h) / 2
+    for i, line in enumerate(lines):
+        x = x1 + ((x2 - x1) - widths[i]) / 2
+        draw.text((x, y), line, font=font, fill=fill)
+        y += heights[i] + line_gap
+
+
 def rounded_rectangle(draw, box, radius, fill, outline=None, width=1):
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
@@ -262,16 +287,8 @@ def render_card(background: Image.Image, product_photo: Image.Image, item: Produ
     base = background.convert('RGBA').resize((CANVAS_SIZE, CANVAS_SIZE), Image.LANCZOS)
 
     photo = product_photo.convert('RGBA')
-    photo_box = (170, 455, 960, 1035)
+    photo_box = (165, 455, 920, 1025)
     contained, (px, py) = fit_image_contain(photo, photo_box)
-
-    shadow = Image.new('RGBA', base.size, (0, 0, 0, 0))
-    shadow_box = Image.new('RGBA', (contained.width + 18, contained.height + 18), (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow_box)
-    shadow_draw.rounded_rectangle((9, 9, shadow_box.width - 9, shadow_box.height - 9), 20, fill=(0, 0, 0, 55))
-    shadow_box = shadow_box.filter(ImageFilter.GaussianBlur(10))
-    shadow.alpha_composite(shadow_box, (px - 6, py + 8))
-    base = Image.alpha_composite(base, shadow)
     base.alpha_composite(contained, (px, py))
 
     overlay = Image.new('RGBA', base.size, (0, 0, 0, 0))
@@ -279,55 +296,32 @@ def render_card(background: Image.Image, product_photo: Image.Image, item: Produ
 
     clean = normalize_text(item.raw)
     model_match = re.search(r'\b([A-Z]{1,4}\d{3,}[A-Z0-9.-]*)\b', clean)
-    model_text = model_match.group(1) if model_match else item.title.split()[-1]
-    title_text = item.title.replace(model_text, '').strip() if model_text in item.title else item.title.strip()
+    model_text = model_match.group(1) if model_match else ''
+
+    title_text = item.title.strip()
+    if model_text and model_text in title_text:
+        title_text = title_text.replace(model_text, '').strip()
     if not title_text:
         title_text = item.title.strip()
 
-    title_box = (190, 123, 1000, 228)
-    title_font_size = 46
-    title_font = get_font(title_font_size, bold=True)
-    title_lines = wrap_text_by_width(draw, title_text, title_font, title_box[2] - title_box[0] - 30, 2)
-    total_h = len(title_lines) * int(title_font_size * 1.1)
-    ty = title_box[1] + ((title_box[3] - title_box[1]) - total_h) / 2 - 4
-    for line in title_lines:
-        bbox = draw.textbbox((0, 0), line, font=title_font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        tx = title_box[0] + ((title_box[2] - title_box[0]) - tw) / 2
-        draw.text((tx, ty), line, font=title_font, fill=(255, 255, 255))
-        ty += th + 10
+    # Fixed banner text positions based on uploaded background
+    title_box = (175, 120, 1015, 225)
+    title_font, _ = fit_font_size(draw, title_text, title_box[2] - title_box[0] - 40, 56, 28, True)
+    title_lines = wrap_text_by_width(draw, title_text, title_font, title_box[2] - title_box[0] - 40, 2)
+    draw_centered_lines(draw, title_lines, title_box, title_font, (255, 255, 255), line_gap=6)
 
-    model_box = (450, 245, 770, 338)
-    model_font_size = 50
-    model_font = get_font(model_font_size, bold=True)
-    while draw.textbbox((0, 0), model_text, font=model_font)[2] > (model_box[2] - model_box[0] - 20) and model_font_size > 28:
-        model_font_size -= 2
-        model_font = get_font(model_font_size, bold=True)
-    mb = draw.textbbox((0, 0), model_text, font=model_font)
-    mw = mb[2] - mb[0]
-    mh = mb[3] - mb[1]
-    mx = model_box[0] + ((model_box[2] - model_box[0]) - mw) / 2
-    my = model_box[1] + ((model_box[3] - model_box[1]) - mh) / 2 - 6
-    draw.text((mx, my), model_text, font=model_font, fill=(244, 245, 0))
+    model_display = model_text or item.title.split()[-1]
+    model_box = (420, 236, 782, 340)
+    model_font, _ = fit_font_size(draw, model_display, model_box[2] - model_box[0] - 24, 54, 26, True)
+    draw_centered_lines(draw, [model_display], model_box, model_font, (245, 235, 0), line_gap=0)
 
-    spec_summary = item.raw
-    spec_box = (90, 325, 1110, 455)
-    spec_font_size = 32
-    spec_font = get_font(spec_font_size, bold=True)
-    spec_lines = wrap_text_by_width(draw, spec_summary, spec_font, spec_box[2] - spec_box[0], 2)
-    while len(spec_lines) > 2 and spec_font_size > 22:
-        spec_font_size -= 2
-        spec_font = get_font(spec_font_size, bold=True)
-        spec_lines = wrap_text_by_width(draw, spec_summary, spec_font, spec_box[2] - spec_box[0], 2)
-    sy = spec_box[1]
-    for line in spec_lines:
-        bbox = draw.textbbox((0, 0), line, font=spec_font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        sx = spec_box[0] + ((spec_box[2] - spec_box[0]) - tw) / 2
-        draw.text((sx, sy), line, font=spec_font, fill=(0, 0, 0))
-        sy += th + 10
+    spec_box = (110, 300, 1090, 420)
+    spec_font = get_font(31, bold=True)
+    spec_lines = wrap_text_by_width(draw, item.raw, spec_font, spec_box[2] - spec_box[0] - 20, 2)
+    if len(spec_lines) > 2:
+        spec_font = get_font(27, bold=True)
+        spec_lines = wrap_text_by_width(draw, item.raw, spec_font, spec_box[2] - spec_box[0] - 20, 2)
+    draw_centered_lines(draw, spec_lines, spec_box, spec_font, (0, 0, 0), line_gap=8)
 
     footer_font = get_font(16, bold=True)
     footer_text = '1080 x 1080'
